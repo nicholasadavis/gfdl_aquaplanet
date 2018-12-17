@@ -1,13 +1,11 @@
 # gfdl_aquaplanet
 Source code modifications for the GFDL Grey Radiation Aquaplanet Model
 
-User Guide
+============================User Guide============================
 
 Users are referred to the Geophysical Fluid Dynamics Laboratory documentation for installing and running the Flexible Modeling System. 
 
-=======================================================================
-Known issues
-=======================================================================
+============================Known issues============================
 
 Dec. 2018: In a pure sigma coordinate model, the stratospheric circulation in axisymmetric circulations with prescribed eddy forcings deviates substantially from the expected value. Running the model with hybrid-sigma coordinates, with the transition to pure pressure levels around 200 hPa, eliminates this behavior. A text file with namelist commands for a and b coefficients for a 40-layer hybrid-sigma model is included in this release. 
 
