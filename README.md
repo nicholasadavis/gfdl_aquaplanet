@@ -47,7 +47,7 @@ Run another eddy-permitting simulation. The following spectral dynamics namelist
 Enabling vertical diffusion
 =======================================================================
 
-Set axi_diffusion = .true. in the spectral dynamics namelist; you can modify the diffusion coefficient via diffusion_coefficient, its default value is 5 (m^2/s).
+Set do_diffusion = .true. in the spectral dynamics namelist; you can modify the diffusion coefficient via diffusion_coefficient, its default value is 5 (m^2/s).
 
 Enabling shortwave psuedo-ozone absorption
 =======================================================================
