@@ -18,7 +18,7 @@ Installation
 
 I recommend you install a parallel compilation of the model if you wish to use this modified source code. Copy your source code, replace the relevant files found here, and compile the model. I have not verified that this modified code will function with any particular combination of compilers. I have verified it is stable using (ADD) on NOAA’s Theia architecture.
 
-=======================================================================
+
 Features
 =======================================================================
 
@@ -30,7 +30,6 @@ The simulation options provided here are very simple, and they can be used in wa
 
 Please reference Davis and Birner (in review) if you use this modified source code, and feel free to contact me with questions or ideas. 
 
-=======================================================================
 Prescribing eddy tendencies to isolate the mean flow response to forcings
 =======================================================================
 
@@ -38,7 +37,6 @@ Run an eddy-permitting simulation first to derive eddy tendencies for an axisymm
 Combine these forcings into an input file in netcdf format. See the example input file included in this release. I have also included a Matlab script as an example post-processing file.
 Run the axisymmetric simulation. The following spectral dynamics namelist parameters must be set: prescribe_fluxes = .true., input_file = /path/to/your/file.nc. You must also initialize the run with the spectral dynamics init namelist option do_zonal_perturbation = .false.
 
-=======================================================================
 Prescribing the mean flow to isolate the eddy response to forcings
 =======================================================================
 
@@ -46,25 +44,21 @@ Run an eddy-permitting simulation first. The following variables must be saved: 
 Combine these into an input file. See the example input file included in this release. I have also included a Matlab script as an example post-processing file.
 Run another eddy-permitting simulation. The following spectral dynamics namelist parameters must be set: prescribe_mean = .true., input_file = /path/to/your/file.nc. 
 
-=======================================================================
 Enabling vertical diffusion
 =======================================================================
 
 Set axi_diffusion = .true. in the spectral dynamics namelist; you can modify the diffusion coefficient via diffusion_coefficient, its default value is 5 (m^2/s).
 
-=======================================================================
 Enabling shortwave psuedo-ozone absorption
 =======================================================================
 
 Set atm_abs = 0.008 and frac_ozone = 1.0 in the gray radiation namelist to replicate the ozone distribution in Davis and Birner (in review). If you are including tropospheric shortwave absorption, you will need to modify these values. E.g., for 10% tropospheric absorption, atm_abs = 0.108 and frac_ozone = .0741.
 
-=======================================================================
 Other options
 =======================================================================
 
 The infrastructure for applying eddy tendencies does not assume the prescribed fields are zonally-averaged. It is therefore possible to use this infrastructure for forcings with zonal structure. 
 
-=======================================================================
 Full description of changes
 =======================================================================
 The following files have been modified from their original state: spectral_dynamics.f90 spectral_init_cond.f90 spectral_initialize_fields.f90 simple_surface.f90 surface_flux.f90 gray_radiation.f90
