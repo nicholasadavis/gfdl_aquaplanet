@@ -127,9 +127,9 @@ logical :: do_mass_correction     = .true. , &
            use_virtual_temperature= .false., &
            use_implicit           = .true.,  &
            triang_trunc           = .true., &
-           apply_fluxes           = .false., &
-           pres_input             = .false., &
-           axi_diffusion          = .false.
+           prescribe_fluxes       = .false., &
+           prescribe_mean         = .false., &
+           do_diffusion          = .false.
 
 integer :: damping_order       = 2, &
            damping_order_vor   =-1, &
@@ -151,7 +151,6 @@ character(len=64) :: topography_option      = 'interpolated', & ! realistic topo
                      vert_advect_t          = default_advect_vert,   &
                      vert_difference_option = 'simmons_and_burridge', &
                      input_file             = 'fluxes.nc', &
-                     pres_input_file    = 'pres.nc'
 
 real    :: damping_coeff       = 1.15740741e-4, & ! (one tenth day)**-1
            damping_coeff_vor   = -1., &
@@ -170,7 +169,7 @@ real    :: damping_coeff       = 1.15740741e-4, & ! (one tenth day)**-1
            ocean_topog_smoothing = .93, &
            initial_sphum       = 0.0, &
            reference_sea_level_press =  101325., &
-           axi_diffusion_coefficient =  5.0
+           diffusion_coefficient =  5.0
 !===============================================================================================
 
 real, dimension(2) :: valid_range_t = (/50.,800./)
@@ -185,11 +184,16 @@ namelist /spectral_dynamics_nml/ use_virtual_temperature, damping_option,       
                                  num_fourier, num_spherical, fourier_inc, triang_trunc,              &
                                  topography_option, vert_coord_option, scale_heights, surf_res,      &
                                  p_press, p_sigma, exponent, ocean_topog_smoothing, initial_sphum,   &
-                                 valid_range_t, eddy_sponge_coeff, zmu_sponge_coeff, zmv_sponge_coeff, &
-                                 print_interval, num_steps, apply_fluxes, input_file, pres_input, &
-                                 pres_input_file, axi_diffusion, axi_diffusion_coefficient
+                                 valid_range_t, eddy_sponge_coeff, zmu_sponge_coeff,                 &
+                                 zmv_sponge_coeff, print_interval, num_steps, prescribe_fluxes,      &
+                                 input_file, do_diffusion, diffusion_coefficient, prescribe_mean
                                  
 contains
+
+interface apply_zonal_mean
+    module procedure apply_zonal_mean_3d
+    module procedure apply_zonal_mean_2d
+end interface
 
 !===============================================================================================
 
@@ -455,6 +459,10 @@ call set_domain(grid_domain)
 
 call get_time(Time_step, seconds, days)
 dt_real = 86400*days + seconds
+
+if (prescribe_fluxes .AND. prescribe_mean) then
+  call error_mesg('spectral_dynamics_init','Cannot prescribe both mean and eddy fields, set either prescribe_fluxes or prescribe_mean to zero in the spectral dynamics namelist',FATAL)
+end if 
 
 module_is_initialized = .true.
 return
@@ -754,18 +762,18 @@ complex, dimension(ms:me, ns:ne, num_levels  ) :: dt_vors, dt_divs, dt_ts, phis_
 complex, dimension(ms:me, ns:ne, num_levels  ) :: dt_vors_damp, dt_divs_damp, dt_ts_damp
 real   , dimension(is:ie, js:je, num_levels  ) :: virtual_t, dp, dt_grid_tmp, pres_data_grid
 real   , dimension(is:ie, js:je, num_levels  ) :: kegen, kegenq, kegenqtinv, water_correction
-real   , dimension(is:ie, js:je              ) :: dx_psg, dy_psg, ln_psg, dt_ln_psg, dt_psg_tmp
+real   , dimension(is:ie, js:je              ) :: dx_psg, dy_psg, ln_psg, dt_ln_psg, dt_psg_tmp, ps_forcing
 real   , dimension(is:ie, js:je, num_levels  ) :: phig_full, ln_p_full, phig_full_plus_ke, dp_zm, ug_zm, vg_zm, q_zm
 real   , dimension(is:ie, js:je, num_levels  ) :: dt_grid_tmp_zm, tg_zm
 real   , dimension(is:ie, js:je, num_levels+1) :: phig_half, ln_p_half, wg, wg_zm
 
 real   , dimension(js:je                                ) :: lat
-real, dimension(is:ie, js:je, num_levels             ) :: dt_ug_tmp, dt_vg_tmp, dt_tg_tmp, dt_mom, deriv_1, deriv_2
-real, dimension(is:ie, js:je, num_levels             ) :: flux_x, flux_y, flux_t, flux_q, flux_mass_div, rho
-real, dimension(is:ie, js:je, num_levels             ) :: flux_mass_div_int, flux_mass_uv, flux_mass_uv_int
-real, dimension(is:ie, js:je, num_levels             ) :: flux_q_int, flux_x_int, flux_y_int, flux_t_int
-real, intent(out), dimension(is:ie, js:je, num_levels) :: dt_ug_damp, dt_vg_damp, dt_tg_damp, dt_ug_diff
-real, dimension(is:ie, js:je, num_levels, num_tracers) :: dt_tracers_tmp
+real   , dimension(is:ie, js:je, num_levels             ) :: dt_ug_tmp, dt_vg_tmp, dt_tg_tmp, dt_mom, deriv_1, deriv_2
+real   , dimension(is:ie, js:je, num_levels             ) :: forcing_u, forcing_v, forcing_t, forcing_q, forcing_mass_div, rho
+real   , dimension(is:ie, js:je, num_levels             ) :: forcing_mass_div_int, forcing_mass_uv, forcing_mass_uv_int
+real   , dimension(is:ie, js:je, num_levels             ) :: forcing_q_int, forcing_x_int, forcing_y_int, forcing_t_int
+real   , intent(out), dimension(is:ie, js:je, num_levels) :: dt_ug_damp, dt_vg_damp, dt_tg_damp, dt_ug_diff
+real   , dimension(is:ie, js:je, num_levels, num_tracers) :: dt_tracers_tmp
 
 integer :: i, j, k, time_level, seconds, days, nsphum, l, axi_test
 real    :: delta_t, temperature_correction, test_forcing, test_field
@@ -779,20 +787,24 @@ endif
 
 step_loop: do step_number=1,num_steps
 
-!Load eddy forcings
-if (apply_fluxes) then
-  call read_data(input_file, 'forcing_x', flux_x(:,:,:), grid_domain)
-  call read_data(input_file, 'forcing_y', flux_y(:,:,:), grid_domain)
-  call read_data(input_file, 'forcing_t', flux_t(:,:,:), grid_domain)
-  call read_data(input_file, 'forcing_q', flux_q(:,:,:), grid_domain)
-  call read_data(input_file, 'forcing_mass_div', flux_mass_div(:,:,:), grid_domain)
-  call read_data(input_file, 'forcing_mass_uv', flux_mass_uv(:,:,:), grid_domain)
+!Load prescribed eddy/mean fields
+if (prescribe_fluxes .OR. prescribe_mean) then
+  call read_data(input_file, 'forcing_x', forcing_u(:,:,:), grid_domain)
+  call read_data(input_file, 'forcing_y', forcing_v(:,:,:), grid_domain)
+  call read_data(input_file, 'forcing_t', forcing_t(:,:,:), grid_domain)
+  call read_data(input_file, 'forcing_q', forcing_q(:,:,:), grid_domain)
   call read_data(input_file, 'pres', pres_data, no_domain=.true.)
   do i=is,ie
     do j=js,je
        pres_data_grid(i,j,:)=pres_data
     enddo
   enddo
+  if (prescribe_fluxes) then
+    call read_data(input_file, 'forcing_mass_div', flux_mass_div(:,:,:), grid_domain)
+    call read_data(input_file, 'forcing_mass_uv', flux_mass_uv(:,:,:), grid_domain)
+  else
+    call read_data(input_file, 'psg', psg_forcing(:,:,:), grid_domain)
+  endif
 endif
 
 if(previous == current) then
@@ -814,6 +826,15 @@ dt_tracers_tmp = dt_tracers
 
 call initialize_corrections(dt_ug, dt_vg, dt_tg, dt_tracers, delta_t)
 
+!Prescribe mean-state prognostic vars
+if (prescribe_mean) then
+  call prescribe_mean_state_2d(psg(:,:,current),psg_forcing)
+  call prescribe_mean_state_3d(ug(:,:,:,current),ug_forcing,pfull,pres_data_grid)
+  call prescribe_mean_state_3d(vg(:,:,:,current),vg_forcing,pfull,pres_data_grid)
+  call prescribe_mean_state_3d(tg(:,:,:,current),tg_forcing,pfull,pres_data_grid)
+  call prescribe_mean_state_3d(grid_tracers(:,:,:,current,nhum),q_forcing,pfull,pres_data_grid)
+endif
+
 call pressure_variables (p_half, ln_p_half, p_full, ln_p_full, psg(:,:,current))
 
 call compute_pressure_gradient  (ln_ps(:,:,current), psg(:,:,current), dx_psg, dy_psg)
@@ -825,7 +846,7 @@ else
 endif
 
 !Interpolate eddy mass forcing
-if (apply_fluxes) then
+if (prescribe_fluxes) then
   call pres_interp(pres_data_grid,flux_mass_div,p_full,flux_mass_div_int,.true.)
   call pres_interp(pres_data_grid,flux_mass_uv,p_full,flux_mass_uv_int,.true.)
 else
@@ -861,18 +882,18 @@ if(t_vert_advect_scheme == VAN_LEER_LINEAR .or.  t_vert_advect_scheme == FINITE_
 call vert_advection(delta_t, wg, dp, tg(:,:,:,time_level),  dt_grid_tmp, scheme=t_vert_advect_scheme, form=ADVECTIVE_FORM)
 dt_tg_tmp = dt_tg_tmp + dt_grid_tmp
 !Load eddy temperature forcings
-if (apply_fluxes) then
-  call pres_interp(pres_data_grid,flux_t,p_full,flux_t_int,.true.)
-  dt_tg_tmp = dt_tg_tmp + flux_t_int
+if (prescribe_fluxes) then
+  call pres_interp(pres_data_grid,forcing_t,p_full,forcing_t_int,.true.)
+  dt_tg_tmp = dt_tg_tmp + forcing_t_int
 endif
 
 call horizontal_advection(ts(:,:,:,current), ug(:,:,:,current), vg(:,:,:,current), dt_tg_tmp)
 
 !Vertical temperature diffusion
-if (axi_diffusion) then
+if (do_diffusion) then
   rho = p_full / (tg(:,:,:,time_level) * rdgas)
   call flux_convergence_vertical(tg(:,:,:,time_level),deriv_1,p_full)
-  deriv_1 = deriv_1 * ((grav*rho)**2) * axi_diffusion_coefficient
+  deriv_1 = deriv_1 * ((grav*rho)**2) * diffusion_coefficient
   call flux_convergence_vertical(deriv_1,deriv_2,p_full)
   dt_tg_tmp = dt_tg_tmp + deriv_2
 endif
@@ -880,11 +901,11 @@ endif
 call trans_grid_to_spherical(dt_tg_tmp, dt_ts)
 
 !Interpolate eddy momentum forcings
-if (apply_fluxes) then
-  call pres_interp(pres_data_grid,flux_x,p_full,flux_x_int,.true.)
-  call pres_interp(pres_data_grid,flux_y,p_full,flux_y_int,.true.)
-  dt_ug_tmp = dt_ug_tmp + flux_x_int
-  dt_vg_tmp = dt_vg_tmp + flux_y_int
+if (prescribe_fluxes) then
+  call pres_interp(pres_data_grid,forcing_u,p_full,forcing_u_int,.true.)
+  call pres_interp(pres_data_grid,forcing_v,p_full,forcing_v_int,.true.)
+  dt_ug_tmp = dt_ug_tmp + forcing_u_int
+  dt_vg_tmp = dt_vg_tmp + forcing_v_int
 endif
 do j=js,je
   do i=is,ie
@@ -896,14 +917,14 @@ do j=js,je
 enddo
 
 !Vertical momentum diffusion
-if (axi_diffusion) then
+if (do_diffusion) then
   call flux_convergence_vertical(ug(:,:,:,time_level),deriv_1,p_full)
-  deriv_1 = deriv_1 * ((grav*rho)**2) * axi_diffusion_coefficient
+  deriv_1 = deriv_1 * ((grav*rho)**2) * diffusion_coefficient
   call flux_convergence_vertical(deriv_1,dt_ug_diff,p_full)
   dt_ug_tmp = dt_ug_tmp + dt_ug_diff
 
   call flux_convergence_vertical(vg(:,:,:,time_level),deriv_1,p_full)
-  deriv_1 = deriv_1 * ((grav*rho)**2) * axi_diffusion_coefficient
+  deriv_1 = deriv_1 * ((grav*rho)**2) * diffusion_coefficient
   call flux_convergence_vertical(deriv_1,deriv_2,p_full)
   dt_vg_tmp = dt_vg_tmp + deriv_2
 endif
@@ -956,15 +977,15 @@ if(minval(tg(:,:,:,future)) < valid_range_t(1) .or. maxval(tg(:,:,:,future)) > v
 endif
 
 !Interpolate eddy moisture forcings
-if (apply_fluxes) then
-  call pres_interp(pres_data_grid,flux_q,p_full,flux_q_int,.true.)
-  dt_tracers_tmp(:,:,:,nhum) = dt_tracers_tmp(:,:,:,nhum) + flux_q_int
+if (prescribe_fluxes) then
+  call pres_interp(pres_data_grid,forcing_q,p_full,forcing_q_int,.true.)
+  dt_tracers_tmp(:,:,:,nhum) = dt_tracers_tmp(:,:,:,nhum) + forcing_q_int
 endif
 
 !Vertical moisture diffusion
-if (axi_diffusion) then
+if (do_diffusion) then
   call flux_convergence_vertical(grid_tracers(:,:,:,time_level,nhum),deriv_1,p_full)
-  deriv_1 = deriv_1 * ((grav*rho)**2) * axi_diffusion_coefficient
+  deriv_1 = deriv_1 * ((grav*rho)**2) * diffusion_coefficient
   call flux_convergence_vertical(deriv_1,deriv_2,p_full)
   dt_tracers_tmp(:,:,:,nhum) = dt_tracers_tmp(:,:,:,nhum) + deriv_2
 endif
@@ -993,7 +1014,7 @@ tg_final  =  tg(:,:,:,current)
 grid_tracers_final = grid_tracers(:,:,:,current,:)
 
 !Test for axisymmetry 
-if (apply_fluxes) then
+if (prescribe_fluxes) then
   axi_test=0
   do i=is,ie
     if (tg_final(1,5,5) .ne. tg_final(i,5,5)) axi_test=1
@@ -1105,7 +1126,7 @@ real   , intent(out  ), dimension(:) :: dt_hadv, dt_vadv
 
 
 complex, dimension(ms:me, ns:ne, num_levels) :: dt_trs
-real,    dimension(is:ie, js:je, num_levels) :: dp, dt_tmp, tr_future, flux_q, dt_tracers_eddy
+real,    dimension(is:ie, js:je, num_levels) :: dp, dt_tmp, tr_future, forcing_q, dt_tracers_eddy
 integer :: ntr, time_level, i, j, k
 real, dimension(num_levels)                  :: pres_data, q_int
 real :: test_forcing, test_field
@@ -1946,7 +1967,6 @@ if (id_mse > 0) then
   used=send_data(id_mse,mse,Time)
 endif
 
-
 if (id_vmse > 0) then
   work = v_grid * mse
   call pres_interp(pfull_zm,work,pfull_grid,work_interp,.true.)
@@ -2056,8 +2076,8 @@ real                             :: average
 
 do k=1,num_levels
   do j=js,je
-      average=sum(field(:,j,k))/real(size(field,1))
-      field_zm(:,j,k)=average
+      average = sum(field(:,j,k))/real(size(field,1))
+      field_zm(:,j,k) = average
   enddo
 enddo
 
@@ -2072,11 +2092,11 @@ real    :: average_1, average_2, average
 
 do k=1,num_levels
   do j=js,je
-    average_1=sum(component_1(:,j,k))/real(size(component_1(:,j,k),1))
-    average_2=sum(component_2(:,j,k))/real(size(component_2(:,j,k),1))
-    average=sum(component_1(:,j,k)*component_2(:,j,k))/real(size(component_1,1))
+    average_1 = sum(component_1(:,j,k))/real(size(component_1(:,j,k),1))
+    average_2 = sum(component_2(:,j,k))/real(size(component_2(:,j,k),1))
+    average = sum(component_1(:,j,k)*component_2(:,j,k))/real(size(component_1,1))
     do i=is,ie
-      eddy(i,j,k)=average-(average_1*average_2)
+      eddy(i,j,k) = average - (average_1*average_2)
     enddo
   enddo
 enddo
@@ -2108,7 +2128,7 @@ flux = flux * coslat
 call trans_grid_to_spherical(flux, flux_s)
 flux_convergence_s = compute_lat_deriv_cos(flux_s)
 call trans_spherical_to_grid(flux_convergence_s,flux_convergence)
-flux_convergence = flux_convergence / (coslat**2)
+flux_convergence = flux_convergence / (coslat**2 + 1.0e-3)
 
 end subroutine flux_convergence_horiz
 !===================================================================================
@@ -2118,7 +2138,6 @@ real, intent(in), dimension(is:ie, js:je, num_levels)  :: flux, p_full
 real, intent(out), dimension(is:ie, js:je, num_levels) :: flux_convergence
 integer :: k
 
-!centered difference method, with forward and backward differencing at the boundaries
 do k = 2, num_levels-1
     flux_convergence(:,:,k) = ((flux(:,:,k+1)-flux(:,:,k-1))) / (p_full(:,:,k+1)-p_full(:,:,k-1))
 enddo
@@ -2126,6 +2145,49 @@ flux_convergence(:,:,1) = ((flux(:,:,2)-flux(:,:,1))) / (p_full(:,:,2)-p_full(:,
 flux_convergence(:,:,num_levels) = ((flux(:,:,num_levels)-flux(:,:,num_levels-1))) / (p_full(:,:,num_levels)-p_full(:,:,num_levels-1))
 
 end subroutine flux_convergence_vertical
+!===================================================================================
+subroutine prescribe_mean_state_3d(zonal_mean,full_field,pfull,pres_grid)
+
+real, intent(in),    dimension(is:ie, js:je, num_levels) :: zonal_mean, pfull, pres_grid
+real, intent(inout), dimension(is:ie, js:je, num_levels) :: full_field
+real,                dimension(is:ie, js:je, num_levels) :: full_field_za, full_field_interp
+integer :: k
+
+!Interpolate to regular grid
+call interp_pres(pfull,full_field,pres_grid,full_field_interp,.false.)
+call zonal_average(full_field_interp,full_field_za)
+
+do k = 1, num_levels
+    call prescribe_mean_state_2d(zonal_mean(:,:,k),full_field_interp(:,:,k),full_field_za(:,:,k))
+end do
+
+!Interpolate back to hybrid
+call interp_pres(pres_grid,full_field_interp,pfull,full_field,.false.)
+
+end subroutine prescribe_mean_state_3d
+!===================================================================================
+subroutine prescribe_mean_state_2d(zonal_mean,full_field,full_field_za)
+
+real, intent(in),           dimension(is:ie, js:je)  :: zonal_mean
+real, intent(inout),        dimension(is:ie, js:je) :: full_field
+real, intent(in), optional, dimension(is:ie, js:je) :: full_field_za
+real,                       dimension(is:ie, js:je, num_levels) :: full_field_3d, full_field_za_3d
+integer :: i, j
+
+if (.NOT. present(full_field_za)) then
+  full_field_3d(:,:,:) = 0
+  full_field_3d(:,:,1) = full_field
+  call zonal_average(full_field_3d,full_field_za_3d)
+  full_field_za = full_field_za_3d(:,:,1)
+endif
+
+do j = js, je
+   do i = is, ie
+      full_field(i,j) = full_field(i,j) + zonal_mean(i,j) - full_field_za(i,j)
+   end do
+end do
+
+end subroutine prescribe_mean_state_2d
 !===================================================================================
 subroutine pres_interp(pres,field,pres_grid,field_interp,zonal_mean)
 
@@ -2144,7 +2206,7 @@ character(len=64) :: output
 field_interp(:,:,:) = 0
 
 !Quadratic interpolation scheme
-!Can save computation time if field is axisymmetric
+!Can save computation time if field is axisymmetric with zonal_mean = .true.
 
 if (zonal_mean) then
   is_h=is
@@ -2205,8 +2267,8 @@ enddo
 if (zonal_mean) then
   do k=1,num_levels
     do j=js,je
-    field_interp(:,j,k) = field_interp(is_h,j,k)
-  enddo
+      field_interp(:,j,k) = field_interp(is_h,j,k)
+    enddo
   enddo
 endif
 
