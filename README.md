@@ -6,7 +6,6 @@ User Guide
 
 Users are referred to the Geophysical Fluid Dynamics Laboratory documentation for installing and running the Flexible Modeling System. 
 
-============================
 Known issues
 ============================
 
@@ -14,7 +13,6 @@ Dec. 2018: In a pure sigma coordinate model, the stratospheric circulation in ax
 
 Dec. 2018: The shortwave ozone optical depth has a finite value at the model lid, resulting in extreme shortwave absorption at the model lid.
 
-=======================================================================
 Installation
 =======================================================================
 
