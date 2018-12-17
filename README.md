@@ -1,9 +1,7 @@
 # gfdl_aquaplanet
 Source code modifications for the GFDL Grey Radiation Aquaplanet Model
 
-=======================================================================
 User Guide
-=======================================================================
 
 Users are referred to the Geophysical Fluid Dynamics Laboratory documentation for installing and running the Flexible Modeling System. 
 
