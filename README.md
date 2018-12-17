@@ -1,7 +1,6 @@
 # gfdl_aquaplanet
 Source code modifications for the GFDL Grey Radiation Aquaplanet Model
 
-============================
 User Guide
 ============================
 
