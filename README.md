@@ -16,8 +16,7 @@ Dec. 2018: The shortwave ozone optical depth has a finite value at the model lid
 Installation
 =======================================================================
 
-I recommend you install a parallel compilation of the model if you wish to use this modified source code. Copy your source code, replace the relevant files found here, and compile the model. I have not verified that this modified code will function with any particular combination of compilers. I have verified it is stable using (ADD) on NOAA’s Theia architecture.
-
+I recommend you install a parallel compilation of the model if you wish to use this modified source code. Copy your source code, replace the relevant files found here, and compile the model. I have not verified that this modified code will function with any particular combination of compilers and on any particular architecture. I have verified it is stable running on 16 and 64 cores using the Intel 15.6.233, Intel MPI 5.0.3.048, NetCDF 4.4.0, and HDF5 Parallel 1.8.14 compilers on NOAA’s Theia architecture. Please contact me if you have questions about compilers or compiler options - I might be able to help.
 
 Features
 =======================================================================
