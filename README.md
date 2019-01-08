@@ -64,6 +64,8 @@ The following files have been modified from their original state: spectral_dynam
 
 spectral_dynamics.f90: modified to apply prescribed eddy tendencies to the model atmosphere to the u, v, T, ps, and q fields, or to apply prescribed zonal mean flow fields. Modified to save eddy flux convergences on-line in the diagnostics section. Modified to include a quadratic interpolation subroutine, fast eddy flux calculation subroutine, horizontal convergence subroutine, vertical convergence subroutine, and various other subroutines (zonal averaging, zonal mean flow forcing, etc.). The horizontal convergence subroutine employs the spectral method to calculate derivatives exactly, while the vertical convergence subroutine uses a centered difference method. At low vertical resolutions, this may be suboptimal. It is recommended that you run the model with at least 40 vertical levels so that the boundary layer, stratosphere, and vertical flux convergences are resolved. Includes the option to run with a constant free atmospheric diffusion for u, v, T, and q.
 
+atmosphere.f90: modified to pass hyperdiffusive damping to spectral_diagnostics.
+
 spectral_init_cond.f90: modified to accept namelist input to initialize the model as zonally-symmetric.
 
 spectral_initialize_field.f90: modified to initialize the model as zonally-symmetric.
