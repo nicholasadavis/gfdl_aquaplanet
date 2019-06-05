@@ -57,7 +57,11 @@ integer :: id_drag_moist,  id_drag_heat,  id_drag_mom,              &
            id_del_h,  id_del_m,  id_del_q, id_albedo,               &
            id_entrop_evap, id_entrop_shflx, id_entrop_lwflx,        &
            id_eddy_u, id_eddy_v, id_eddy_t, id_eddy_q,              &
-           id_o_flux_mer, is, ie, js, je, lat_max
+           id_o_flux_mer, is, ie, js, je, lat_max,                  &
+           id_dhdt_surf_eddy, id_dedt_surf_eddy, id_dedq_surf_eddy, &
+           id_drdt_surf_eddy, id_dhdt_atm_eddy, id_dedq_atm_eddy,   &
+           id_dtaudu_atm_eddy, id_dtaudv_atm_eddy, id_u_star_eddy,  &
+           id_b_star_eddy, id_flux_lw_eddy, id_rough_mom_eddy
 
 logical :: first_static = .true.
 logical :: do_init = .true.
@@ -110,8 +114,11 @@ namelist /simple_surface_nml/ z_ref_heat, z_ref_mom,             &
 
   real, allocatable, dimension(:,:) :: dhdt_surf, dedt_surf, dedq_surf, &
                                        drdt_surf, dhdt_atm, dedq_atm, &
-                                       flux_t, flux_q, flux_lw
-
+                                       flux_t, flux_q, flux_lw, &
+                                       dhdt_surf_eddy, dedt_surf_eddy, dedq_surf_eddy, &
+                                       drdt_surf_eddy, dhdt_atm_eddy, dedq_atm_eddy, &
+                                       flux_t_eddy, flux_q_eddy
+                                                
   real, allocatable, dimension(:,:) :: sst, flux_u, flux_v, flux_o_global, &
                                        flux_meridional_global, f_global, cos_lat_global, &
                                        delta_t_surf_zm_global, delta_lat_global, lat_global, &
@@ -145,9 +152,13 @@ real, dimension(size(Atm%t_bot,1), size(Atm%t_bot,2)) :: &
        u_surf, v_surf, rough_heat, rough_moist,          &
        stomatal, snow, water, max_water,                 &
        q_star, q_surf, cd_q, cd_t, cd_m, wind, dtaudu_atm, &
-       u_stress_eddy, v_stress_eddy,delta_t,work,sst_clamp,  &
+       flux_u_eddy, flux_v_eddy, delta_t,work,sst_clamp,  &
        zm_speed_spread, drag_m, rho_drag, tv_atm, rho, &
-       e_sat, work_diff, rho_t, rho_q, drag_t, drag_q, p_ratio, th_atm, q_sat, t_eddy, q_eddy, work_2
+       e_sat, work_diff, rho_t, rho_q, drag_t, drag_q, &
+       p_ratio, th_atm, q_sat, work_2, &
+       dtaudu_atm_eddy, dtaudv_atm_eddy, flux_lw_eddy, &
+       rough_mom_eddy, u_star_eddy, b_star_eddy
+
 
 real, dimension(size(Atm%t_bot,1))  :: zm_u_vect, zm_v_vect, eddy_u, eddy_v, work_zm
 
@@ -206,8 +217,15 @@ allocate (e_t_n      (size(Atm%t_bot,1), size(Atm%t_bot,2)), &
          dedq_atm   (size(Atm%t_bot,1), size(Atm%t_bot,2)), &
          flux_t     (size(Atm%t_bot,1), size(Atm%t_bot,2)), &
          flux_q     (size(Atm%t_bot,1), size(Atm%t_bot,2)), &
-        ! flux_u     (size(Atm%t_bot,1), size(Atm%t_bot,2)), &
-         flux_lw    (size(Atm%t_bot,1), size(Atm%t_bot,2))  )
+         flux_lw    (size(Atm%t_bot,1), size(Atm%t_bot,2)), &
+         dhdt_surf_eddy (size(Atm%t_bot,1), size(Atm%t_bot,2)), & 
+         dedt_surf_eddy (size(Atm%t_bot,1), size(Atm%t_bot,2)), & 
+         dedq_surf_eddy (size(Atm%t_bot,1), size(Atm%t_bot,2)), &
+         drdt_surf_eddy (size(Atm%t_bot,1), size(Atm%t_bot,2)), &
+         dhdt_atm_eddy (size(Atm%t_bot,1), size(Atm%t_bot,2)), &
+         dedq_atm_eddy (size(Atm%t_bot,1), size(Atm%t_bot,2)), &
+         flux_t_eddy (size(Atm%t_bot,1), size(Atm%t_bot,2)), &
+         flux_q_eddy (size(Atm%t_bot,1), size(Atm%t_bot,2)))
 
 u_surf     = 0.0
 v_surf     = 0.0
@@ -256,15 +274,39 @@ cd_q = 0.0
 
 if (apply_fluxes) then
   call set_domain(grid_domain)
-  call read_data(input_file, 'forcing_taux',   u_stress_eddy(:,:), grid_domain)
-  call read_data(input_file, 'forcing_tauy',   v_stress_eddy(:,:), grid_domain)
-  call read_data(input_file, 'forcing_shf',   t_eddy(:,:), grid_domain)
-  call read_data(input_file, 'forcing_evap',   q_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_taux',   flux_u_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_tauy',   flux_v_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_shf',   flux_t_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_evap',   flux_q_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_dhdt_surf',   dhdt_surf_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_dedt_surf',   dedt_surf_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_dedq_surf',   dedq_surf_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_drdt_surf',   drdt_surf_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_dhdt_atm',   dhdt_atm_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_dedq_atm',   dedq_atm_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_dtaudu_atm',   dtaudu_atm_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_dtaudv_atm',   dtaudv_atm_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_rough_mom',   rough_mom_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_u_star',   u_star_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_b_star',   b_star_eddy(:,:), grid_domain)
+  call read_data(input_file, 'forcing_flux_lw', flux_lw_eddy(:,:), grid_domain)
 else
-  u_stress_eddy = 0
-  v_stress_eddy = 0
-  t_eddy        = 0
-  q_eddy        = 0
+  flux_u_eddy = 0
+  flux_v_eddy = 0
+  flux_t_eddy = 0
+  flux_q_eddy = 0
+  dhdt_surf_eddy = 0
+  dedt_surf_eddy = 0
+  dedq_surf_eddy = 0
+  drdt_surf_eddy = 0
+  dhdt_atm_eddy = 0
+  dedq_atm_eddy = 0
+  dtaudu_atm_eddy = 0
+  dtaudv_atm_eddy = 0
+  rough_mom_eddy = 0
+  b_star_eddy = 0 
+  u_star_eddy = 0
+  flux_lw_eddy = 0
 endif
 
 if (do_sst_clamp) then 
@@ -277,21 +319,16 @@ endif
 
 call surface_flux (Atm%t_bot, Atm%q_bot, Atm%u_bot, Atm%v_bot,        & ! Lima
                   Atm%p_bot, Atm%z_bot, Atm%p_surf, t_surf_atm,      &
-                  t_surf_atm,                                        & ! Required argument, intent(in). t_surf_atm instead of Land%t_ca
-                  q_surf, u_surf, v_surf,                            &
+                  t_surf_atm, q_surf, u_surf, v_surf,                &
                   rough_mom, rough_heat, rough_moist,                &
-                  rough_mom,                                         & ! Required argument, intent(in). rough_mom instead of Land%rough_scale
-                  Atm%gust, flux_t, flux_q, flux_lw, flux_u, flux_v, &
-                  cd_m, cd_t, cd_q, wind, u_star, b_star, q_star,    &
-                  dhdt_surf, dedt_surf,                              &
-                  dedq_surf,                                         & ! Required argument, intent(out), but not needed by this model.
-                  drdt_surf, dhdt_atm, dedq_atm,                     &
-                  dtaudu_atm,                                        & ! Required argument, intent(out), but not needed by this model.
-                  dtaudv_atm, dt,                                    & ! Required argument, intent(in). Looks like it should be .false. everywhere.
-                  .not.mask,                                         &
-                  seawater,                                          & ! Required argument, intent(in). Looks like fudgefactor for salt water. Use .false.
-                  mask, u_stress_eddy, v_stress_eddy, t_eddy, q_eddy)                                               ! Required argument, intent(in). Looks like it should be .true. everywhere.
+                  rough_mom, Atm%gust, flux_t, flux_q, flux_lw,      &
+                  flux_u, flux_v, cd_m, cd_t, cd_q, wind, u_star,    &
+                  b_star, q_star, dhdt_surf, dedt_surf,              &
+                  dedq_surf, drdt_surf, dhdt_atm, dedq_atm,          &
+                  dtaudu_atm, dtaudv_atm, dt, .not.mask, seawater,   &
+                  mask, flux_u_eddy, flux_v_eddy, flux_t_eddy, flux_q_eddy)
 
+!eddy fluxes based on zonal mean variables, for determining fluxes due to eddies
 if ( id_eddy_t > 0 .or. id_eddy_q > 0 .or. id_eddy_u > 0 .or. id_eddy_v > 0) then
   u_surf_zm = 0.0
   v_surf_zm = 0.0
@@ -331,9 +368,14 @@ if ( id_eddy_t > 0 .or. id_eddy_q > 0 .or. id_eddy_u > 0 .or. id_eddy_v > 0) the
                     mask_zm, u_eddy_zm, v_eddy_zm, t_eddy_zm, q_eddy_zm)
 endif
 
-flux_u_atm = flux_u 
-flux_v_atm = flux_v 
-
+rough_mom = rough_mom + rough_mom_eddy
+flux_lw = flux_lw + flux_lw_eddy
+flux_u = flux_u + flux_u_eddy
+flux_v = flux_v + flux_v_eddy
+flux_u_atm = flux_u
+flux_v_atm = flux_v
+dtaudu_atm = dtaudu_atm + dtaudu_atm_eddy
+dtaudv_atm = dtaudv_atm + dtaudv_atm_eddy
 land_frac = 0.0
 
 !=======================================================================
@@ -354,6 +396,8 @@ if ( id_albedo     > 0 ) used = send_data ( id_albedo,     albedo,             T
 if ( id_u_flux     > 0 ) used = send_data ( id_u_flux,     flux_u,             Time )
 if ( id_v_flux     > 0 ) used = send_data ( id_v_flux,     flux_v,             Time )
 
+
+!------------------- surface fluxes due to eddies --------------------
 if ( id_eddy_t > 0) then
     work = spread(flux_t_zm,1,size(flux_t,1))
     call zonal_mean(flux_t,work_zm)
@@ -382,8 +426,90 @@ if ( id_eddy_v > 0) then
     work = work_2 - work
     used = send_data(id_eddy_v, work, Time)
 endif
-
-
+if ( id_dhdt_surf_eddy > 0) then 
+    work = spread(dhdt_surf_zm,1,size(flux_v,1))
+    call zonal_mean(dhdt_surf,work_zm)
+    work_2 = spread(work_zm,1,size(flux_v,1))
+    work = work_2 - work
+    used = send_data(id_dhdt_surf_eddy, work, Time)
+endif
+if ( id_dedt_surf_eddy > 0) then
+    work = spread(dedt_surf_zm,1,size(flux_v,1))
+    call zonal_mean(dedt_surf,work_zm)
+    work_2 = spread(work_zm,1,size(flux_v,1))
+    work = work_2 - work    
+    used = send_data(id_dedt_surf_eddy, work, Time)
+endif
+if ( id_dedq_surf_eddy > 0) then
+    work = spread(dedq_surf_zm,1,size(flux_v,1))
+    call zonal_mean(dedq_surf,work_zm)
+    work_2 = spread(work_zm,1,size(flux_v,1))
+    work = work_2 - work    
+    used = send_data(id_dedq_surf_eddy, work, Time)
+endif
+if ( id_drdt_surf_eddy > 0) then
+    work = spread(drdt_surf_zm,1,size(flux_v,1))
+    call zonal_mean(drdt_surf,work_zm)
+    work_2 = spread(work_zm,1,size(flux_v,1))
+    work = work_2 - work    
+    used = send_data(id_drdt_surf_eddy, work, Time)
+endif
+if ( id_dhdt_atm_eddy > 0) then
+    work = spread(dhdt_atm_zm,1,size(flux_v,1))
+    call zonal_mean(dhdt_atm,work_zm)
+    work_2 = spread(work_zm,1,size(flux_v,1))
+    work = work_2 - work    
+    used = send_data(id_dhdt_atm_eddy, work, Time)
+endif
+if ( id_dedq_atm_eddy > 0) then
+    work = spread(dedq_atm_zm,1,size(flux_v,1))
+    call zonal_mean(dedq_atm,work_zm)
+    work_2 = spread(work_zm,1,size(flux_v,1))
+    work = work_2 - work    
+    used = send_data(id_dedq_atm_eddy, work, Time)
+endif
+if ( id_dtaudu_atm_eddy > 0) then
+    work = spread(dtaudu_atm_zm,1,size(flux_v,1))
+    call zonal_mean(dtaudu_atm,work_zm)
+    work_2 = spread(work_zm,1,size(flux_v,1))
+    work = work_2 - work    
+    used = send_data(id_dtaudu_atm_eddy, work, Time)
+endif
+if (id_dtaudv_atm_eddy > 0) then
+    work = spread(dtaudv_atm_zm,1,size(flux_v,1))
+    call zonal_mean(dtaudv_atm,work_zm)
+    work_2 = spread(work_zm,1,size(flux_v,1))
+    work = work_2 - work    
+    used = send_data(id_dtaudv_atm_eddy, work, Time)
+endif
+if (id_rough_mom_eddy > 0) then
+    work = spread(rough_mom_zm,1,size(flux_v,1))
+    call zonal_mean(rough_mom,work_zm)
+    work_2 = spread(work_zm,1,size(flux_v,1))
+    work = work_2 - work
+    used = send_data(id_rough_mom_eddy, work, Time)
+endif
+if (id_u_star_eddy > 0) then
+    work = spread(u_star_zm,1,size(flux_v,1))
+    call zonal_mean(u_star,work_zm)
+    work_2 = spread(work_zm,1,size(flux_v,1))
+    work = work_2 - work
+    used = send_data(id_u_star_eddy, work, Time)
+endif
+if (id_b_star_eddy > 0) then
+    work = spread(b_star_zm,1,size(flux_v,1))
+    call zonal_mean(b_star,work_zm)
+    work_2 = spread(work_zm,1,size(flux_v,1))
+    work = work_2 - work
+    used = send_data(id_b_star_eddy, work, Time)
+endif
+if (id_flux_lw_eddy > 0) then
+    work = spread(flux_lw_zm,1,size(flux_v,1))
+    call zonal_mean(flux_lw,work_zm)
+    work_2 = spread(work_zm,1,size(flux_v,1))
+    work = work_2 - work
+    used = send_data(id_flux_lw_eddy, work, Time)
+endif
 !=======================================================================
 
  end subroutine compute_flux
@@ -413,6 +539,7 @@ integer :: j, half, i
 logical :: used
 character(len=64) :: ch1
 
+
 allocate( f_global (is:ie,1:lat_max), &
           sin_lat_global (is:ie,1:lat_max), &
           cos_lat_global (is:ie,1:lat_max), &
@@ -422,13 +549,13 @@ allocate( f_global (is:ie,1:lat_max), &
           delta_flux_global (is:ie,1:lat_max), &
           cos_deriv_global (is:ie,1:lat_max), &
           tau_x_zm_global (is:ie,1:lat_max), &
-          t_surf_zm_global (is:ie,1:lat_max), & 
+          t_surf_zm_global (is:ie,1:lat_max), &
           enthalpy_global (is:ie,1:lat_max), &
-          flux_o_global (is:ie,1:lat_max), & 
+          flux_o_global (is:ie,1:lat_max), &
           flux_u_zm_global (is:ie,1:lat_max), & 
-          sst_zm_global (is:ie,1:lat_max), & 
+          sst_zm_global (is:ie,1:lat_max), &
           flux_o_global_vector (1:lat_max), & 
-          p (1:lat_max,1:lat_max), & 
+          p (1:lat_max,1:lat_max), &
           flux_meridional_global (is:ie,1:lat_max) )
 
 half = lat_max/2
@@ -466,23 +593,23 @@ cp_inv = 1.0/cp_air
 
 ! temperature
 
-gamma      =  1./ (1.0 - dtmass*(dflux_t + dhdt_atm*cp_inv))
-e_t_n      =  dtmass*dhdt_surf*cp_inv*gamma
-f_t_delt_n = (delta_t + dtmass * flux_t*cp_inv) * gamma    
+gamma      =  1./ (1.0 - dtmass*(dflux_t + (dhdt_atm + dhdt_atm_eddy)*cp_inv))
+e_t_n      =  dtmass*(dhdt_surf + dhdt_surf_eddy)*cp_inv*gamma
+f_t_delt_n = (delta_t + dtmass * (flux_t + flux_t_eddy) *cp_inv) * gamma    
 
-flux_t     =  flux_t        + dhdt_atm * f_t_delt_n
+flux_t     =  flux_t + flux_t_eddy + (dhdt_atm + dhdt_atm_eddy) * f_t_delt_n
 
-dhdt_surf  =  dhdt_surf     + dhdt_atm * e_t_n   
+dhdt_surf  =  dhdt_surf + dhdt_surf_eddy + (dhdt_atm + dhdt_atm_eddy) * e_t_n   
 
 ! moisture
 
-gamma      =  1./ (1.0 - dtmass*(dflux_q + dedq_atm))
-e_q_n      =  dtmass*dedt_surf*gamma
-f_q_delt_n = (delta_q  + dtmass * flux_q) * gamma    
+gamma      =  1./ (1.0 - dtmass*(dflux_q + dedq_atm + dedq_atm_eddy))
+e_q_n      =  dtmass*(dedt_surf + dedt_surf_eddy)*gamma
+f_q_delt_n = (delta_q  + dtmass * (flux_q + flux_q_eddy)) * gamma    
 
-flux_q     =  flux_q        + dedq_atm * f_q_delt_n
+flux_q     =  flux_q + flux_q_eddy + (dedq_atm + dedq_atm_eddy) * f_q_delt_n
 
-dedt_surf  =  dedt_surf     + dedq_atm * e_q_n
+dedt_surf  =  dedt_surf + dedt_surf_eddy + (dedq_atm + dedq_atm_eddy) * e_q_n
 
 !################################################
 !               OCEAN FLUX
@@ -557,16 +684,18 @@ if(surface_choice == 1) then
   flux    = (flux_lw + Atm%flux_sw - hlf*Atm%fprec &
           - (flux_t + hlv*flux_q) + flux_o_global(is:ie,js:je))*dt/heat_capacity
 
-  deriv   = - (dhdt_surf + hlv*dedt_surf + drdt_surf)*dt/heat_capacity 
+  deriv   = - (dhdt_surf + hlv*dedt_surf + drdt_surf + drdt_surf_eddy)*dt/heat_capacity 
 
-  dt_t_surf = flux/(1.0 -deriv)
+  dt_t_surf = flux/(1.0 - deriv)
 
   if (do_sst_clamp) then 
 
     call set_domain(grid_domain)
     call read_data(sst_file, 'ts_field',   sst_clamp(:,:), grid_domain)
     sst = sst_clamp
+  
   else
+  
     sst = sst + dt_t_surf
     
   endif
@@ -579,7 +708,7 @@ endif
 
 flux_t     = flux_t      + dt_t_surf*dhdt_surf
 flux_q     = flux_q      + dt_t_surf*dedt_surf
-flux_lw    = flux_lw     - dt_t_surf*drdt_surf
+flux_lw    = flux_lw     - dt_t_surf*(drdt_surf+drdt_surf_eddy)
 dt_t_atm   = f_t_delt_n  + dt_t_surf*e_t_n
 dt_q_atm   = f_q_delt_n  + dt_t_surf*e_q_n
 
@@ -613,10 +742,13 @@ call sum_diag_integral_field ('evap', flux_q*86400.)
 deallocate (f_global, sin_lat_global, cos_lat_global, delta_t_surf_zm_global, &
            delta_lat_global, lat_global, delta_flux_global, cos_deriv_global, &
            tau_x_zm_global, enthalpy_global, flux_o_global, flux_u_zm_global, &
-           sst_zm_global, flux_o_global_vector, p, flux_meridional_global)
+           sst_zm_global, flux_o_global_vector, p, flux_meridional_global, &
+           t_surf_zm_global)
 deallocate (f_t_delt_n, f_q_delt_n, e_t_n, e_q_n)
-deallocate(dhdt_surf, dedt_surf, dedq_surf, drdt_surf, dhdt_atm, dedq_atm, &
-          flux_t, flux_q, flux_lw)  
+deallocate (dhdt_surf, dedt_surf, dedq_surf, drdt_surf, dhdt_atm, dedq_atm, &
+           flux_t, flux_q, flux_lw, dhdt_surf_eddy, dedt_surf_eddy, &
+           dedq_surf_eddy, drdt_surf_eddy, dhdt_atm_eddy, dedq_atm_eddy, &
+           flux_q_eddy, flux_t_eddy)  
 
 
 !-----------------------------------------------------------------------
@@ -858,15 +990,19 @@ register_diag_field ( mod_name, 'v_ref',      atmos_axes, Time,     &
 id_del_h      = &
 register_diag_field ( mod_name, 'del_h',      atmos_axes, Time,  &
                     'ref height interp factor for heat', 'none' )
+
 id_del_m      = &
 register_diag_field ( mod_name, 'del_m',      atmos_axes, Time,     &
                     'ref height interp factor for momentum','none' )
+
 id_del_q      = &
 register_diag_field ( mod_name, 'del_q',      atmos_axes, Time,     &
                     'ref height interp factor for moisture','none' )
+
 id_albedo      = &
 register_diag_field ( mod_name, 'albedo',      atmos_axes, Time,     &
                     'surface albedo','none' )
+
 id_entrop_evap      = &
 register_diag_field ( mod_name, 'entrop_evap', atmos_axes, Time,     &
                     'entropy source from evap','kg/m2/s/K' )
@@ -879,6 +1015,53 @@ id_entrop_lwflx      = &
 register_diag_field ( mod_name, 'entrop_lwflx', atmos_axes, Time,     &
                     'entropy source from LW flux','w/m2/K' )
 
+id_dhdt_surf_eddy    = &
+register_diag_field ( mod_name, 'dhdt_surf_eddy', atmos_axes, Time,     &
+                    'dhdt surf due to eddies','w/m2/K' ) 
+
+id_dedt_surf_eddy    = &
+register_diag_field ( mod_name, 'dedt_surf_eddy', atmos_axes, Time,     &
+                    'dedt surf due to eddies','Pa/K' )
+
+id_dedq_surf_eddy    = &
+register_diag_field ( mod_name, 'dedq_surf_eddy', atmos_axes, Time,     &
+                    'dedq surf due to eddies','Pa/Pa/K' )
+
+id_drdt_surf_eddy    = &
+register_diag_field ( mod_name, 'drdt_surf_eddy', atmos_axes, Time,     &
+                    'drdt surf due to eddies','w/m2/K' )
+
+id_dhdt_atm_eddy    = &
+register_diag_field ( mod_name, 'dhdt_atm_eddy', atmos_axes, Time,     &
+                    'dhdt atm due to eddies','w/m2/K' )
+
+id_dedq_atm_eddy    = &
+register_diag_field ( mod_name, 'dedq_atm_eddy', atmos_axes, Time,     &
+                    'dedq atm due to eddies','Pa/K' )
+
+id_dtaudu_atm_eddy    = &
+register_diag_field ( mod_name, 'dtaudu_atm_eddy', atmos_axes, Time,     &
+                    'dtaudu atm due to eddies','Pa*s/m' )
+
+id_dtaudv_atm_eddy    = &
+register_diag_field ( mod_name, 'dtaudv_atm_eddy', atmos_axes, Time,     &
+                    'dtaudv atm due to eddies','Pa*s/m' )
+
+id_rough_mom_eddy    = &
+register_diag_field ( mod_name, 'rough_mom_eddy', atmos_axes, Time,     &
+                    'momentum roughness due to eddies','m' )
+
+id_flux_lw_eddy    = &
+register_diag_field ( mod_name, 'flux_lw_eddy', atmos_axes, Time,     &
+                    'lw flux due to eddies','w/m2' )
+
+id_u_star_eddy    = &
+register_diag_field ( mod_name, 'u_star_eddy', atmos_axes, Time,     &
+                    'u star due to eddies','m/s' )
+
+id_b_star_eddy    = &
+register_diag_field ( mod_name, 'b_star_eddy', atmos_axes, Time,     &
+                    'b star due to eddies','m/s2' )
 !-----------------------------------------------------------------------
 
 end subroutine diag_field_init
@@ -936,7 +1119,10 @@ do while (sign_change .eq. 1)
     bounds(1) = j+1
   endif
   j = j - 1
-  if (lat(j) .le. -60) then
+  if (j .lt. 2) then
+     sign_change = 0
+     bounds(1) = j+1
+  else if (lat(j) .le. -60) then
     sign_change = 0
     bounds(1) = j+1
   endif 
@@ -949,7 +1135,10 @@ do while (sign_change .eq. 1)
     bounds(2) = j-1
   endif
   j = j + 1
-  if (lat(j) .ge. 60) then
+  if (j .gt. lat_max-1) then
+     sign_change = 0
+     bounds(2) = lat_max-1
+  else if (lat(j) .ge. 60) then
     sign_change = 0
     bounds(2) = j-1
   endif 

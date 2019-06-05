@@ -78,13 +78,13 @@ psg    = exp(ln_psg)
 
 if (zonal_perturbation) then
 
-  !if(choice_of_init == 1) then  ! perturb temperature field
+  if(choice_of_init == 1) then  ! perturb temperature field
     if(is <= 1 .and. ie >= 1 .and. js <= 1 .and. je >= 1) then
       tg(1,1,:) = tg(1,1,:) + 1.0
     endif
-  !endif
+  endif
 
-  !if(choice_of_init == 2) then   ! initial vorticity perturbation used in benchmark code
+  if(choice_of_init == 2) then   ! initial vorticity perturbation used in benchmark code
     if(ms <= 1 .and. me >= 1 .and. ns <= 3 .and. ne >= 3) then
       vors(2-ms,4-ns,num_levels  ) = initial_perturbation
       vors(2-ms,4-ns,num_levels-1) = initial_perturbation
@@ -105,14 +105,18 @@ if (zonal_perturbation) then
       vors(6-ms,3-ns,num_levels-1) = initial_perturbation
       vors(6-ms,3-ns,num_levels-2) = initial_perturbation
     endif
-    call uv_grid_from_vor_div(vors, divs, ug, vg)
-  !endif
-else 
-	!random, zonally-symmetric wind perturbation to kick things off
-	ug = 1.0
-	vg(is:ie,je/2,:) = -0.05
 
-	call vor_div_from_uv_grid(ug, vg, vors, divs, triang=triang_trunc)
+    if(is <= 1 .and. ie >= 1 .and. js <= 1 .and. je >= 1) then
+      tg(1,1,:) = tg(1,1,:) + 1.0
+    endif
+    
+    call uv_grid_from_vor_div(vors, divs, ug, vg)
+  endif
+else
+   if (js<=1 .and. je>=1) then
+       ug(:,js,:) = initial_perturbation
+       vg(:,js,:) = initial_perturbation
+   endif
 endif
 
 call trans_grid_to_spherical(tg, ts)

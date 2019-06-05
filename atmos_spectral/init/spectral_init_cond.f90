@@ -61,7 +61,7 @@ real,    intent(out), dimension(:,:,:) :: vorg, divg
 real,    intent(out), dimension(:,:  ) :: surf_geopotential
 logical, optional, intent(in), dimension(:,:) :: ocean_mask
 
-integer :: choice_of_init = 2
+integer :: choice_of_init = 1
 integer :: unit, ierr, io
 
 !------------------------------------------------------------------------------------------------
